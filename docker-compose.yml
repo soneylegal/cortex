@@ -1,0 +1,31 @@
+# ──────────────────────────────────────────────
+# Cortex — LocalStack for local development
+# ──────────────────────────────────────────────
+# Using LocalStack 4.4.0 (last free version without auth token)
+#
+# LAMBDA_RUNTIME_ENVIRONMENT_TIMEOUT=180 gives more time for
+# the Lambda runtime to initialize with heavy dependencies
+# (pydantic, powertools, boto3 = ~27MB zip).
+# ──────────────────────────────────────────────
+
+services:
+  localstack:
+    image: localstack/localstack:4.4.0
+    container_name: cortex-localstack
+    ports:
+      - "4566:4566"
+    environment:
+      - SERVICES=lambda,sqs,dynamodb,apigateway,iam,sts,cloudwatch,logs
+      - DEFAULT_REGION=us-east-1
+      - DEBUG=${LOCALSTACK_DEBUG:-0}
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - LAMBDA_RUNTIME_ENVIRONMENT_TIMEOUT=180
+    volumes:
+      - "./volume:/var/lib/localstack"
+      - "/var/run/docker.sock:/var/run/docker.sock"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
