@@ -41,7 +41,11 @@ API_KEY_HEADER = "x-api-key"
 
 def get_queue_url() -> str:
     """Return the SQS queue URL from the environment."""
-    return os.environ[ENV_QUEUE_URL]
+    return os.environ.get(ENV_QUEUE_URL, "")
+
+def get_event_bus_name() -> str:
+    """Return the EventBridge EventBus name from the environment."""
+    return os.environ.get("EVENT_BUS_NAME", "")
 
 
 def get_table_name() -> str:

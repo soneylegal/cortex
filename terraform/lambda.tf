@@ -116,14 +116,13 @@ data "aws_iam_policy_document" "producer_policy" {
     resources = ["*"]
   }
 
-  # SQS — send messages to the main queue only
+  # EventBridge — send events to the main bus
   statement {
     effect = "Allow"
     actions = [
-      "sqs:SendMessage",
-      "sqs:GetQueueUrl",
+      "events:PutEvents"
     ]
-    resources = [aws_sqs_queue.main.arn]
+    resources = [aws_cloudwatch_event_bus.main.arn]
   }
 }
 
@@ -213,7 +212,7 @@ resource "aws_lambda_function" "producer" {
 
   environment {
     variables = {
-      QUEUE_URL               = aws_sqs_queue.main.url
+      EVENT_BUS_NAME          = aws_cloudwatch_event_bus.main.name
       POWERTOOLS_SERVICE_NAME = "${var.project_name}-producer"
       POWERTOOLS_LOG_LEVEL    = var.lambda_log_level
       LOG_LEVEL               = var.lambda_log_level

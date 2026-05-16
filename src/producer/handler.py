@@ -19,13 +19,13 @@ from http import HTTPStatus
 import boto3
 from pydantic import ValidationError
 
-from shared.constants import API_KEY_HEADER, DEFAULT_REGION, get_api_key, get_queue_url
+from shared.constants import API_KEY_HEADER, DEFAULT_REGION, get_api_key, get_event_bus_name
 from shared.logger import LambdaContext, Tracer, extract_correlation_id, extract_source_ip, get_logger
 from shared.schemas import AcceptedResponse, ErrorResponse, EventRecord, IngestEvent
 
 logger = get_logger(service="cortex-producer")
 tracer = Tracer(service="cortex-producer")
-sqs_client = boto3.client("sqs", region_name=DEFAULT_REGION)
+events_client = boto3.client("events", region_name=DEFAULT_REGION)
 
 
 # ──────────────────────────────────────────────
@@ -132,30 +132,28 @@ def handler(event: dict, context: LambdaContext) -> dict:
         },
     )
 
-    # 4. Send to SQS
+    # 4. Send to EventBridge
     try:
-        queue_url = get_queue_url()
-        sqs_response = sqs_client.send_message(
-            QueueUrl=queue_url,
-            MessageBody=record.model_dump_json(),
-            MessageAttributes={
-                "event_type": {
-                    "DataType": "String",
-                    "StringValue": record.event_type,
-                },
-                "severity": {
-                    "DataType": "String",
-                    "StringValue": record.severity,
-                },
-                "source": {
-                    "DataType": "String",
-                    "StringValue": record.source,
-                },
-            },
+        event_bus_name = get_event_bus_name()
+        response = events_client.put_events(
+            Entries=[
+                {
+                    "Time": record.timestamp,
+                    "Source": f"cortex.producer.{record.source}",
+                    "Resources": [],
+                    "DetailType": record.event_type,
+                    "Detail": record.model_dump_json(),
+                    "EventBusName": event_bus_name,
+                }
+            ]
         )
-        message_id = sqs_response["MessageId"]
+        if response["FailedEntryCount"] > 0:
+            raise Exception("Failed to put event to EventBridge")
+        
+        # EventBridge doesn't return a single message_id the same way, we extract from Entries
+        message_id = response["Entries"][0].get("EventId", "unknown")
     except Exception:
-        logger.exception("Failed to send message to SQS")
+        logger.exception("Failed to send message to EventBridge")
         error = ErrorResponse(message="Internal server error — failed to enqueue event")
         return _build_response(HTTPStatus.INTERNAL_SERVER_ERROR, error.model_dump())
 
