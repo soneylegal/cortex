@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from aws_lambda_powertools import Logger
+from aws_lambda_powertools import Logger, Tracer
 from aws_lambda_powertools.utilities.typing import LambdaContext
 
 
@@ -43,6 +43,7 @@ def extract_source_ip(event: dict) -> str | None:
 __all__ = [
     "LambdaContext",
     "Logger",
+    "Tracer",
     "extract_correlation_id",
     "extract_source_ip",
     "get_logger",

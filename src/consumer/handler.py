@@ -20,10 +20,11 @@ import boto3
 from botocore.exceptions import ClientError
 
 from shared.constants import DEFAULT_REGION, PK_FIELD, SK_FIELD, get_table_name
-from shared.logger import LambdaContext, get_logger
+from shared.logger import LambdaContext, Tracer, get_logger
 from shared.schemas import EventRecord
 
 logger = get_logger(service="cortex-consumer")
+tracer = Tracer(service="cortex-consumer")
 dynamodb = boto3.resource("dynamodb", region_name=DEFAULT_REGION)
 
 
@@ -70,6 +71,7 @@ def _persist_record(record: EventRecord, table_name: str) -> None:
 # ──────────────────────────────────────────────
 
 
+@tracer.capture_method
 def _process_record(sqs_record: dict, table_name: str) -> None:
     """Parse an SQS record body and persist to DynamoDB.
 
@@ -104,6 +106,7 @@ def _process_record(sqs_record: dict, table_name: str) -> None:
 
 
 @logger.inject_lambda_context(log_event=True)
+@tracer.capture_lambda_handler
 def handler(event: dict, context: LambdaContext) -> dict:
     """Lambda entrypoint — SQS batch trigger.
 

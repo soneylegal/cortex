@@ -106,6 +106,16 @@ data "aws_iam_policy_document" "producer_policy" {
     resources = ["arn:aws:logs:*:*:*"]
   }
 
+  # X-Ray Tracing
+  statement {
+    effect = "Allow"
+    actions = [
+      "xray:PutTraceSegments",
+      "xray:PutTelemetryRecords",
+    ]
+    resources = ["*"]
+  }
+
   # SQS — send messages to the main queue only
   statement {
     effect = "Allow"
@@ -141,6 +151,16 @@ data "aws_iam_policy_document" "consumer_policy" {
       "logs:PutLogEvents",
     ]
     resources = ["arn:aws:logs:*:*:*"]
+  }
+
+  # X-Ray Tracing
+  statement {
+    effect = "Allow"
+    actions = [
+      "xray:PutTraceSegments",
+      "xray:PutTelemetryRecords",
+    ]
+    resources = ["*"]
   }
 
   # SQS — receive, delete, get attributes from the main queue
@@ -184,16 +204,20 @@ resource "aws_lambda_function" "producer" {
   memory_size   = var.lambda_memory_size
   timeout       = var.lambda_timeout
 
+  tracing_config {
+    mode = "Active"
+  }
+
   filename         = data.archive_file.producer_zip.output_path
   source_code_hash = data.archive_file.producer_zip.output_base64sha256
 
   environment {
     variables = {
-      QUEUE_URL                = aws_sqs_queue.main.url
-      POWERTOOLS_SERVICE_NAME  = "${var.project_name}-producer"
-      POWERTOOLS_LOG_LEVEL     = var.lambda_log_level
-      LOG_LEVEL                = var.lambda_log_level
-      CORTEX_API_KEY           = var.api_key
+      QUEUE_URL               = aws_sqs_queue.main.url
+      POWERTOOLS_SERVICE_NAME = "${var.project_name}-producer"
+      POWERTOOLS_LOG_LEVEL    = var.lambda_log_level
+      LOG_LEVEL               = var.lambda_log_level
+      CORTEX_API_KEY          = var.api_key
     }
   }
 
@@ -209,15 +233,19 @@ resource "aws_lambda_function" "consumer" {
   memory_size   = var.lambda_memory_size
   timeout       = var.lambda_timeout
 
+  tracing_config {
+    mode = "Active"
+  }
+
   filename         = data.archive_file.consumer_zip.output_path
   source_code_hash = data.archive_file.consumer_zip.output_base64sha256
 
   environment {
     variables = {
-      TABLE_NAME               = aws_dynamodb_table.events.name
-      POWERTOOLS_SERVICE_NAME  = "${var.project_name}-consumer"
-      POWERTOOLS_LOG_LEVEL     = var.lambda_log_level
-      LOG_LEVEL                = var.lambda_log_level
+      TABLE_NAME              = aws_dynamodb_table.events.name
+      POWERTOOLS_SERVICE_NAME = "${var.project_name}-consumer"
+      POWERTOOLS_LOG_LEVEL    = var.lambda_log_level
+      LOG_LEVEL               = var.lambda_log_level
     }
   }
 

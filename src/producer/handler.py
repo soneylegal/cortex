@@ -20,10 +20,11 @@ import boto3
 from pydantic import ValidationError
 
 from shared.constants import API_KEY_HEADER, DEFAULT_REGION, get_api_key, get_queue_url
-from shared.logger import LambdaContext, extract_correlation_id, extract_source_ip, get_logger
+from shared.logger import LambdaContext, Tracer, extract_correlation_id, extract_source_ip, get_logger
 from shared.schemas import AcceptedResponse, ErrorResponse, EventRecord, IngestEvent
 
 logger = get_logger(service="cortex-producer")
+tracer = Tracer(service="cortex-producer")
 sqs_client = boto3.client("sqs", region_name=DEFAULT_REGION)
 
 
@@ -41,6 +42,7 @@ def _build_response(status_code: int, body: dict) -> dict:
     }
 
 
+@tracer.capture_method
 def _validate_api_key(event: dict) -> str | None:
     """Check the x-api-key header against the configured key.
 
@@ -71,6 +73,7 @@ def _validate_api_key(event: dict) -> str | None:
 
 
 @logger.inject_lambda_context(log_event=True)
+@tracer.capture_lambda_handler
 def handler(event: dict, context: LambdaContext) -> dict:
     """Lambda entrypoint — API Gateway v2 proxy integration."""
 

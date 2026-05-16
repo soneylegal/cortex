@@ -67,9 +67,10 @@ resource "aws_api_gateway_deployment" "cortex" {
 
 # Stage: dev
 resource "aws_api_gateway_stage" "dev" {
-  deployment_id = aws_api_gateway_deployment.cortex.id
-  rest_api_id   = aws_api_gateway_rest_api.cortex.id
-  stage_name    = var.environment
+  deployment_id        = aws_api_gateway_deployment.cortex.id
+  rest_api_id          = aws_api_gateway_rest_api.cortex.id
+  stage_name           = var.environment
+  xray_tracing_enabled = true
 
   tags = local.common_tags
 }
