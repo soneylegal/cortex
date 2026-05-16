@@ -1,121 +1,147 @@
 # 🧠 Cortex — Serverless Data Pipeline
 
-> Pipeline de dados serverless para **Monitoramento de Infraestrutura**, construído com foco em **Resiliência**, **Cloud Nativo** e **Infrastructure as Code**.
+![Build Status](https://img.shields.io/github/actions/workflow/status/soneylegal/cortex/ci.yml?branch=main&style=flat-square)
+![Python](https://img.shields.io/badge/python-3.12+-blue.svg?style=flat-square&logo=python&logoColor=white)
+![Terraform](https://img.shields.io/badge/terraform-1.5+-623CE4.svg?style=flat-square&logo=terraform&logoColor=white)
+![LocalStack](https://img.shields.io/badge/localstack-3.8.1-brightgreen.svg?style=flat-square&logo=localstack&logoColor=white)
+![Semantic Release](https://img.shields.io/badge/%20%20%F0%9F%93%A6%F0%9F%9A%80-semantic--release-e10079.svg?style=flat-square)
+![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg?style=flat-square)
 
-```
-User → API Gateway (REST) → Lambda Producer → SQS → Lambda Consumer → DynamoDB
-                                                ↓ (falhas)
-                                               DLQ
-```
+> A modern, production-grade, and **100% Zero-Cost** Serverless Data Pipeline for Infrastructure Monitoring. Built with a focus on **Resilience**, **Observability**, **Data Lakehouse analytics**, and **Infrastructure as Code**.
 
 ---
 
+## 🏛️ Architecture
+
+The Cortex pipeline is designed to ingest high-throughput telemetry, process it securely, and fan out the data to both a real-time transactional database and a historical analytical Data Lake.
+
+```mermaid
+flowchart LR
+    Client([User / Agent]) -- "JWT Auth" --> APIGW[API Gateway]
+    
+    subgraph Ingestion Layer
+        APIGW -- "REST API" --> AuthLambda(Authorizer Lambda)
+        APIGW -- "POST /events" --> ProdLambda(Producer Lambda)
+    end
+    
+    subgraph Routing Layer
+        ProdLambda -- "PutEvents" --> EB[EventBridge Bus]
+        EB -- "Rule: Main" --> SQS[SQS Queue]
+        EB -- "Rule: Analytics" --> Firehose[Kinesis Firehose]
+    end
+
+    subgraph Transactional Layer
+        SQS -- "Event Source Mapping" --> ConsLambda(Consumer Lambda)
+        ConsLambda -- "Batch Persist" --> DDB[(DynamoDB)]
+        SQS -. "3x Retries" .-> DLQ[Dead Letter Queue]
+    end
+    
+    subgraph Analytical Data Lake
+        Firehose -- "Buffer & Compress" --> S3[(S3 Data Lake)]
+        S3 -. "Schema" .-> Glue[AWS Glue]
+        Glue -. "Query" .-> Athena[AWS Athena]
+    end
+    
+    subgraph Observability
+        DLQ -- "Alarm" --> CW[CloudWatch Alarms]
+        CW -- "Trigger" --> SNS[SNS Alerts]
+    end
+```
+
 ## 📌 Development Status
 
-| Dimensão | Estado |
+| Component | Status |
 |---|---|
-| **Release** | `v0.1.0` — Initial Architecture |
-| **Pipeline** | ✅ API Gateway → Producer → SQS (validado E2E no LocalStack) |
-| **Consumer** | ✅ Lógica implementada e testada unitariamente (23/23 testes) |
-| **IaC** | ✅ Terraform apply completo — 18 recursos provisionados |
-| **Lint** | ✅ `ruff check` + `ruff format` — zero warnings |
-| **Licença** | Apache License 2.0 |
+| **Pipeline Core** | ✅ API Gateway → EventBridge → SQS → Consumer → DynamoDB |
+| **Data Lake** | ✅ Kinesis Firehose → S3 Data Lake → Glue → Athena |
+| **Observability** | ✅ Powertools Logging, X-Ray Tracing, CloudWatch Alarms & SNS |
+| **CI/CD** | ✅ GitHub Actions (Lint, Mypy, Bandit, Pytest, Terraform, Semantic Release) |
+| **Local Environment** | ✅ 100% Free LocalStack 3.8.1 emulation with Zero-Cost bypass |
 
-## 🔬 Engineering Notes
+## ⚡ Technology Stack
+
+| Layer | Technology |
+|---|---|
+| **Ingestion** | AWS API Gateway (REST API v1) + Custom JWT Authorizer |
+| **Validation** | AWS Lambda (Python 3.12) + Pydantic |
+| **Messaging** | AWS EventBridge + AWS SQS + Dead Letter Queue |
+| **Processing** | AWS Lambda (Consumer) |
+| **Persistence** | AWS DynamoDB (On-Demand, Idempotent) |
+| **Data Lake** | Amazon S3 + Kinesis Firehose + AWS Glue + AWS Athena |
+| **Observability**| AWS Lambda Powertools + AWS X-Ray + CloudWatch + SNS |
+| **IaC** | Terraform (HCL) |
+| **Dev Environment**| LocalStack 3.8.1 + Docker Compose |
+
+## 🔬 Engineering Highlights
 
 <details>
-<summary><strong>Decisões Técnicas & Trade-offs</strong></summary>
+<summary><strong>Advanced Architectural Decisions & Trade-offs</strong></summary>
 
-### API Gateway v1 (REST) vs v2 (HTTP)
+### 1. The Zero-Cost Local Environment Bypass
+To guarantee a completely free development environment, this project enforces an infrastructure lockdown against LocalStack Pro features. Terraform dynamically utilizes `count = var.use_localstack ? 0 : 1` to gracefully skip Pro services (Glue and Athena) during CI/CD LocalStack emulation, while successfully deploying them when targeting the real AWS cloud. We specifically pinned LocalStack to `v3.8.1` to bypass mandatory cloud account authentications introduced in v4.
 
-O plano original usava HTTP API (v2) por ser mais leve e barato. Durante o deploy no LocalStack, identificamos que **`apigatewayv2` não é suportado na edição community**. A migração para REST API (v1) foi feita sem perda funcional — v1 é fully emulated no LocalStack e elegível ao Free Tier da AWS.
+### 2. Idempotency & Partial Batch Failure
+The Consumer utilizes DynamoDB `ConditionExpression` (`attribute_not_exists`) to guarantee that messages reprocessed by SQS do not generate duplicate entries. This pairs seamlessly with SQS `ReportBatchItemFailures`, ensuring that only failing messages within a batch are retried, preventing successful messages from being needlessly reprocessed.
 
-### Lambda Package Size: 27MB → 5.2MB
+### 3. Event-Driven Fan-Out Pattern
+Migrating from direct SQS invocation to Amazon EventBridge allows the pipeline to implement a robust fan-out architecture. A single telemetry event from the Producer is instantly routed to both the transactional pipeline (SQS -> DynamoDB) and the analytical pipeline (Firehose -> S3) without adding execution overhead to the Producer Lambda.
 
-O pacote inicial incluía `boto3` + `botocore` (~22MB), que **já estão disponíveis no runtime do Lambda**. Excluí-los reduziu o zip de 27MB para 5.2MB, eliminando timeouts de cold-start no LocalStack e melhorando o tempo de deploy.
-
-### LocalStack 4.4.0 (pinned)
-
-A partir de 2025, o LocalStack exige `LOCALSTACK_AUTH_TOKEN` mesmo no tier gratuito. A versão 4.4.0 é a última que opera sem autenticação. Para usar a versão mais recente, basta criar uma conta gratuita em [app.localstack.cloud](https://app.localstack.cloud) e configurar o token no `docker-compose.yml`.
-
-### Idempotência no DynamoDB
-
-O Consumer usa `ConditionExpression` (`attribute_not_exists(event_id) AND attribute_not_exists(timestamp)`) para garantir que mensagens reprocessadas pelo SQS não gerem duplicatas. Isso é essencial quando combinado com `ReportBatchItemFailures`, que pode re-entregar mensagens individuais de um batch.
-
-### Empty API Key = Open Mode
-
-A variável `CORTEX_API_KEY` quando vazia (`""`) é tratada como `None` (modo aberto). Isso permite deploy sem autenticação por padrão, com ativação via `terraform apply -var="api_key=..."`.
-
+### 4. Lambda Package Optimization (27MB → 5.2MB)
+`boto3` and `botocore` are pre-packaged in the standard AWS Lambda Python runtime. Removing them from the build packaging reduced the deployment artifact size from ~27MB to 5.2MB, significantly improving cold-start times and deployment speed.
 </details>
 
 ---
 
-## ⚡ Stack
+## 📁 Repository Structure
 
-| Camada | Tecnologia |
-|---|---|
-| **Ingestão** | AWS API Gateway (REST API v1) |
-| **Validação** | AWS Lambda (Python 3.12) + Pydantic |
-| **Mensageria** | AWS SQS + Dead Letter Queue |
-| **Processamento** | AWS Lambda (Consumer) |
-| **Persistência** | AWS DynamoDB (on-demand) |
-| **IaC** | Terraform (HCL) |
-| **Dev Local** | LocalStack 4.4.0 + Docker Compose |
-| **Observabilidade** | AWS Lambda Powertools (structured logging) |
-
-## 📁 Estrutura
-
-```
+```text
 cortex/
 ├── src/
-│   ├── producer/       # Lambda — validação + envio para SQS
-│   ├── consumer/       # Lambda — processamento + DynamoDB
-│   └── shared/         # Logger, schemas, constantes
-├── terraform/          # Infra completa (9 arquivos .tf)
-├── scripts/            # Deploy, load test, seed DLQ
+│   ├── producer/       # Lambda — validates & puts events to EventBridge
+│   ├── consumer/       # Lambda — pulls from SQS & persists to DynamoDB
+│   ├── authorizer/     # Lambda — JWT validation for API Gateway
+│   ├── read_api/       # Lambda — FastAPI microservice for querying events
+│   └── shared/         # Shared schemas, constants, logging utils
+├── terraform/          # Complete Infrastructure as Code (EventBridge, S3, Glue, etc)
+├── scripts/            # Deployment, load testing, and seeding utilities
 ├── tests/
-│   ├── unit/           # Testes unitários (mock)
-│   └── integration/    # Testes e2e (LocalStack)
-├── docker-compose.yml  # LocalStack
-├── Makefile            # 20+ targets
-├── pyproject.toml      # Deps + config (ruff, pytest, mypy)
-├── CHANGELOG.md        # Histórico de releases
-└── LICENSE             # Apache License 2.0
+│   ├── unit/           # Unit tests with fully mocked AWS resources (boto3 stubs)
+│   └── integration/    # E2E Tests running against LocalStack
+├── docker-compose.yml  # LocalStack container configuration
+├── Makefile            # Automation targets (make deploy, make test)
+└── pyproject.toml      # Dependency management and tool config
 ```
 
 ## 🚀 Quick Start
 
-### Pré-requisitos
-
+### Prerequisites
 - Python 3.12+
 - Docker & Docker Compose
 - Terraform >= 1.5
 
-### 1. Instalar dependências
-
+### 1. Install Dependencies
 ```bash
 pip install -e ".[dev]"
 ```
 
-### 2. Rodar testes unitários
-
+### 2. Deploy Locally (LocalStack)
 ```bash
-make test
+make localstack-up      # Starts the LocalStack container (v3.8.1)
+make deploy-local       # Packages Lambdas and runs terraform apply locally
 ```
 
-### 3. Deploy local (LocalStack)
-
+### 3. Run Tests
 ```bash
-make localstack-up      # Sobe o LocalStack
-make deploy-local       # Empacota Lambdas + terraform apply
+make test               # Runs unit tests
+make test-integration   # Runs E2E integration tests against LocalStack
 ```
 
-### 4. Testar o pipeline
-
+### 4. Test the Pipeline
 ```bash
-# Enviar um evento válido
+# Send a valid telemetry event
 curl -X POST http://localhost:4566/restapis/<api-id>/dev/_user_request_/events \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <your-jwt-token>" \
   -d '{
     "source": "server-web-01",
     "event_type": "cpu_usage",
@@ -124,97 +150,33 @@ curl -X POST http://localhost:4566/restapis/<api-id>/dev/_user_request_/events \
   }'
 ```
 
-### 5. Teste de carga
-
+### 5. Load Testing
 ```bash
 make load-test          # 10 requests
 make load-test-100      # 100 requests
 ```
 
-## 🛡️ Resiliência
+## 🛡️ Resilience & Security
 
-| Mecanismo | Implementação |
+| Feature | Implementation |
 |---|---|
-| **Dead Letter Queue** | Mensagens que falham 3× vão para a DLQ |
-| **Partial Batch Failure** | `ReportBatchItemFailures` — só re-processa mensagens que falharam |
-| **Idempotência** | `ConditionExpression` no DynamoDB evita duplicatas |
-| **Visibility Timeout** | 180s (6× Lambda timeout de 30s) |
-| **Scaling Config** | `maximum_concurrency = 5` protege o DynamoDB |
+| **Dead Letter Queue (DLQ)** | Events failing >3 times are diverted to a DLQ for manual inspection. |
+| **Alarms & Alerts** | CloudWatch Alarms monitor DLQ traffic and trigger SNS email alerts. |
+| **Authorization** | REST API is secured with a Custom Lambda Authorizer expecting JWTs. |
+| **Secret Management** | JWT Secrets and API Keys are securely injected via Terraform environment variables. |
 
-## 🔑 Autenticação
-
-O Producer Lambda suporta validação de API Key via header `x-api-key`:
+## 📋 Useful Commands
 
 ```bash
-# Sem autenticação (open mode — padrão)
-curl -X POST .../events -d '...'
-
-# Com API Key configurada (via Terraform variable)
-terraform apply -var="api_key=minha-chave-secreta"
-curl -X POST .../events -H "x-api-key: minha-chave-secreta" -d '...'
-```
-
-## 📋 Makefile Targets
-
-```bash
-make help             # Lista todos os targets
-make install          # Instala dependências dev
+make help             # List all targets
 make lint             # Ruff check + format check
-make format           # Auto-format
-make test             # Testes unitários
-make test-integration # Testes e2e (LocalStack)
-make localstack-up    # Sobe LocalStack
-make deploy-local     # Deploy no LocalStack
-make deploy           # Deploy na AWS real
-make load-test        # Teste de carga
-make seed-dlq         # Testa DLQ com payloads inválidos
-make clean            # Limpa artifacts
+make typecheck        # Mypy type validation
+make deploy           # Deploy to real AWS Account
+make destroy-local    # Tear down LocalStack infra
+make clean            # Remove build artifacts and caches
 ```
 
-## 🏗️ Terraform
-
-```bash
-make tf-init          # terraform init
-make tf-validate      # terraform validate
-make plan-local       # terraform plan (LocalStack)
-make deploy-local     # terraform apply (LocalStack)
-make destroy-local    # terraform destroy (LocalStack)
-```
-
-### Outputs após deploy
-
-| Output | Descrição |
-|---|---|
-| `api_endpoint` | URL base do API Gateway |
-| `api_events_url` | URL completa `POST /events` |
-| `queue_url` | URL da fila SQS principal |
-| `dlq_url` | URL da Dead Letter Queue |
-| `table_name` | Nome da tabela DynamoDB |
-
-## 📊 Schema — Infrastructure Monitoring
-
-```json
-{
-  "source": "server-web-01",
-  "event_type": "cpu_usage",
-  "severity": "warning",
-  "data": {
-    "cpu_percent": 87.5,
-    "load_avg_1m": 2.3,
-    "cores": 4
-  },
-  "hostname": "ip-10-0-1-42",
-  "region": "us-east-1",
-  "tags": {"env": "production", "team": "platform"}
-}
-```
-
-**Event types:** `cpu_usage`, `memory_usage`, `disk_io`, `network_latency`, `network_throughput`, `process_count`, `uptime`, `health_check`, `custom`
-
-**Severities:** `info`, `warning`, `critical`
-
-## 📄 Licença
-
+## 📄 License
 Copyright 2026 Davi Laurindo
 
 Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for details.
