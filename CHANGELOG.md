@@ -1,49 +1,61 @@
-# Changelog
+# CHANGELOG
 
-All notable changes to this project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## v0.2.0 (2026-05-16)
 
-## [0.1.0] — 2026-05-16
+### Bug Fixes
 
-### Added
+* fix(tests): restore wiped handlers, migrate producer to EventBridge and resolve pathing scopes ([`ec2ee0e`](https://github.com/soneylegal/cortex/commit/ec2ee0e2a3e12ea56b6ac37965dc824787c3bc95))
 
-- **Producer Lambda** — API Gateway → SQS ingestion with Pydantic schema validation
-  - Optional `x-api-key` header authentication (open mode by default)
-  - Payload enrichment with `request_id`, `source_ip`, and auto-generated `event_id`
-  - Structured JSON logging via AWS Lambda Powertools
-- **Consumer Lambda** — SQS → DynamoDB persistence with resilience patterns
-  - `ReportBatchItemFailures` for partial batch failure handling
-  - Idempotent writes via `ConditionExpression` (prevents duplicate events)
-  - Graceful handling of malformed messages
-- **Infrastructure as Code** (Terraform)
-  - 9 `.tf` files covering Lambda, SQS, DynamoDB, API Gateway (REST v1), IAM, and CloudWatch
-  - LocalStack toggle via `-var="use_localstack=true"`
-  - Modular design with configurable variables (14 parameters)
-- **SQS Dead Letter Queue** — automatic redrive after 3 failed processing attempts
-- **DynamoDB table** — on-demand billing, composite key (`event_id` + `timestamp`), TTL support
-- **API Gateway REST API** (v1) — `POST /events` endpoint with Lambda proxy integration
-- **Shared library** (`src/shared/`)
-  - `schemas.py` — Pydantic models for 9 event types and 3 severity levels
-  - `constants.py` — centralized configuration and environment variable accessors
-  - `logger.py` — Powertools Logger wrapper with correlation ID extraction
-- **Unit tests** — 23 tests covering Producer (17) and Consumer (6) via pytest + moto
-- **Integration test scaffold** — 4 tests for end-to-end LocalStack validation
-- **Operational scripts**
-  - `deploy.sh` — automated build, packaging, and Terraform orchestration
-  - `load_test.sh` — configurable load testing with metrics
-  - `seed_dlq.sh` — DLQ testing with intentionally malformed payloads
-- **Makefile** — 20+ targets for the full development lifecycle
-- **Docker Compose** — LocalStack 4.4.0 (community edition, no auth token required)
-- **Project configuration** — `pyproject.toml` with ruff, pytest, mypy, and coverage settings
-- **Apache License 2.0**
+### Continuous Integration
 
-### Technical Decisions
+* ci: configure github actions, linting and semantic release ([`f0c15b9`](https://github.com/soneylegal/cortex/commit/f0c15b91fa5fdbf3ddbadb1ce7f64aa696c29d14))
 
-- **API Gateway v1 over v2** — LocalStack community edition does not support `apigatewayv2`; REST API v1 is fully emulated and free-tier eligible on real AWS
-- **LocalStack 4.4.0 pinned** — versions ≥2025 require `LOCALSTACK_AUTH_TOKEN` even for the free tier; 4.4.0 is the last version that runs without authentication
-- **boto3 excluded from Lambda zip** — reduces package size from 27MB to 5.2MB, eliminating cold-start timeouts in LocalStack; boto3 is included in the AWS Lambda runtime
-- **`LAMBDA_RUNTIME_ENVIRONMENT_TIMEOUT=180`** — extended from the default to accommodate initial container provisioning in resource-constrained environments
+### Features
 
-[0.1.0]: https://github.com/soneylegal/cortex/releases/tag/v0.1.0
+* feat(api): create containerized fastapi read microservice via serverless lambda ([`828b091`](https://github.com/soneylegal/cortex/commit/828b091268832c80f3c2f08964788af4aac9bb2e))
+
+* feat(analytics): implement eventbridge fan-out to kinesis firehose and athena data lake ([`3db53cd`](https://github.com/soneylegal/cortex/commit/3db53cde359c3d341d388486124ba710e8b85050))
+
+* feat(security): implement lambda custom authorizer and api gateway rate limiting ([`cb48b0d`](https://github.com/soneylegal/cortex/commit/cb48b0db72bd709ffd58ce813e0c54a9c245a78b))
+
+* feat(observability): enable aws x-ray tracing and provision cloudwatch dashboards ([`6c15a8f`](https://github.com/soneylegal/cortex/commit/6c15a8f3de2494b14550d52712ee744d06b2e058))
+
+
+## v0.1.0 (2026-05-16)
+
+### Breaking
+
+* feat: initial serverless data pipeline architecture
+
+Implement Cortex v0.1.0 — a resilient, cloud-native data pipeline for
+infrastructure monitoring built on AWS serverless primitives.
+
+Architecture:
+- API Gateway (REST v1) → Lambda Producer → SQS → Lambda Consumer → DynamoDB
+- Dead Letter Queue with maxReceiveCount=3 for automatic error redirection
+- ReportBatchItemFailures for partial batch failure handling
+- Idempotent DynamoDB writes via ConditionExpression
+
+Components:
+- Producer Lambda: Pydantic schema validation, optional x-api-key auth,
+  payload enrichment with request metadata, SQS dispatch
+- Consumer Lambda: SQS batch processing, DynamoDB persistence,
+  duplicate detection, structured error reporting
+- Shared library: Powertools logger, Pydantic models (9 event types),
+  centralized constants and environment variable accessors
+
+Infrastructure as Code:
+- 9 Terraform files with LocalStack toggle (-var=use_localstack=true)
+- REST API v1 (LocalStack community compatible)
+- On-demand DynamoDB with TTL support
+- IAM roles with least-privilege policies
+
+Testing & Tooling:
+- 23 unit tests (pytest + moto) — all passing
+- Integration test scaffold for LocalStack E2E validation
+- Makefile with 20+ targets for full development lifecycle
+- Docker Compose with LocalStack 4.4.0 (no auth token required)
+- Operational scripts: deploy, load test, DLQ seeding
+
+BREAKING CHANGE: none (initial release) ([`f3ef56b`](https://github.com/soneylegal/cortex/commit/f3ef56b26fac68e6e9ef3eb56ac2bd31f2ce21f8))
