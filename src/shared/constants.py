@@ -13,6 +13,7 @@ ENV_API_KEY = "CORTEX_API_KEY"
 # ──────────────────────────────────────────────
 # AWS Resource defaults (used by scripts/tests)
 # ──────────────────────────────────────────────
+__version__ = "0.1.0"
 PROJECT_NAME = "cortex"
 DEFAULT_REGION = "us-east-1"
 ENV_AWS_REGION = "AWS_DEFAULT_REGION"

@@ -1,0 +1,70 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  quality:
+    name: Code Quality & Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e ".[dev]"
+        
+    - name: Linting with Ruff
+      run: make lint
+      
+    - name: Type checking with Mypy
+      run: mypy src
+      
+    - name: Security scanning with Bandit
+      run: bandit -r src -c pyproject.toml
+      
+    - name: Unit Tests
+      run: pytest tests/unit -v --cov=src --cov-report=xml
+      
+    - name: Start LocalStack for Integration Tests
+      uses: localstack/setup-localstack@v0.2.2
+      with:
+        image-tag: "4.4.0"
+        
+    - name: Integration Tests
+      run: pytest tests/integration -v
+      env:
+        AWS_ACCESS_KEY_ID: test
+        AWS_SECRET_ACCESS_KEY: test
+        AWS_DEFAULT_REGION: us-east-1
+
+  release:
+    name: Semantic Release
+    needs: quality
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+      id-token: write
+    
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        
+    - name: Python Semantic Release
+      uses: python-semantic-release/python-semantic-release@v9.12.0
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
