@@ -25,12 +25,59 @@ resource "aws_api_gateway_resource" "events" {
   path_part   = "events"
 }
 
+# ──────────────────────────────────────────────
+# Authorizer Integration
+# ──────────────────────────────────────────────
+
+resource "aws_api_gateway_authorizer" "jwt" {
+  name                   = "${var.project_name}-authorizer"
+  rest_api_id            = aws_api_gateway_rest_api.cortex.id
+  authorizer_uri         = aws_lambda_function.authorizer.invoke_arn
+  authorizer_credentials = aws_iam_role.invocation_role.arn
+  type                   = "TOKEN"
+}
+
+# IAM Role for API Gateway to invoke Authorizer
+resource "aws_iam_role" "invocation_role" {
+  name = "${var.project_name}-api-gateway-auth-invoke"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "apigateway.amazonaws.com"
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy" "invocation_policy" {
+  name = "${var.project_name}-api-gateway-auth-invoke-policy"
+  role = aws_iam_role.invocation_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action   = "lambda:InvokeFunction"
+        Effect   = "Allow"
+        Resource = aws_lambda_function.authorizer.arn
+      }
+    ]
+  })
+}
+
 # Method: POST /events
 resource "aws_api_gateway_method" "post_events" {
   rest_api_id   = aws_api_gateway_rest_api.cortex.id
   resource_id   = aws_api_gateway_resource.events.id
   http_method   = "POST"
-  authorization = "NONE"
+  authorization = "CUSTOM"
+  authorizer_id = aws_api_gateway_authorizer.jwt.id
 }
 
 # Lambda integration — proxy to Producer
@@ -82,4 +129,28 @@ resource "aws_lambda_permission" "api_gateway_invoke" {
   function_name = aws_lambda_function.producer.function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_api_gateway_rest_api.cortex.execution_arn}/*/*"
+}
+
+# ──────────────────────────────────────────────
+# Rate Limiting & Usage Plan
+# ──────────────────────────────────────────────
+
+resource "aws_api_gateway_usage_plan" "main" {
+  name = "${var.project_name}-usage-plan"
+
+  api_stages {
+    api_id = aws_api_gateway_rest_api.cortex.id
+    stage  = aws_api_gateway_stage.dev.stage_name
+  }
+
+  throttle_settings {
+    burst_limit = 100
+    rate_limit  = 50
+  }
+
+  quota_settings {
+    limit  = 10000
+    offset = 0
+    period = "DAY"
+  }
 }

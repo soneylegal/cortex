@@ -118,3 +118,14 @@ variable "api_key" {
   default     = ""
   sensitive   = true
 }
+
+# ──────────────────────────────────────────────
+# Security (Phase 3)
+# ──────────────────────────────────────────────
+
+variable "jwt_secret" {
+  description = "Secret key used to validate JWT signatures"
+  type        = string
+  default     = "default-secret-key-for-local-dev"
+  sensitive   = true
+}
