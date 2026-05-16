@@ -29,3 +29,20 @@ services:
       timeout: 5s
       retries: 5
       start_period: 15s
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cortex-api
+    ports:
+      - "8000:8000"
+    environment:
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+      - DYNAMODB_ENDPOINT_URL=http://localstack:4566
+      - TABLE_NAME=cortex-events
+    depends_on:
+      localstack:
+        condition: service_healthy
