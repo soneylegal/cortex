@@ -46,17 +46,17 @@ def _make_sqs_event(records):
 
 
 class TestConsumerHappyPath:
-    @patch("consumer.handler.dynamodb")
+    @patch("src.consumer.handler.dynamodb")
     def test_single_record_no_failures(self, mock_ddb):
-        from consumer.handler import handler
+        from src.consumer.handler import handler
 
         mock_ddb.Table.return_value = MagicMock()
         result = handler(_make_sqs_event([_make_event_record()]), MagicMock())
         assert result["batchItemFailures"] == []
 
-    @patch("consumer.handler.dynamodb")
+    @patch("src.consumer.handler.dynamodb")
     def test_batch_all_succeed(self, mock_ddb):
-        from consumer.handler import handler
+        from src.consumer.handler import handler
 
         mock_ddb.Table.return_value = MagicMock()
         result = handler(_make_sqs_event([_make_event_record() for _ in range(5)]), MagicMock())
@@ -65,9 +65,9 @@ class TestConsumerHappyPath:
 
 
 class TestConsumerPartialFailure:
-    @patch("consumer.handler.dynamodb")
+    @patch("src.consumer.handler.dynamodb")
     def test_one_failure_reports_only_failed_id(self, mock_ddb):
-        from consumer.handler import handler
+        from src.consumer.handler import handler
 
         t = MagicMock()
         mock_ddb.Table.return_value = t
@@ -76,9 +76,9 @@ class TestConsumerPartialFailure:
         assert len(result["batchItemFailures"]) == 1
         assert result["batchItemFailures"][0]["itemIdentifier"] == "msg-0001"
 
-    @patch("consumer.handler.dynamodb")
+    @patch("src.consumer.handler.dynamodb")
     def test_all_fail(self, mock_ddb):
-        from consumer.handler import handler
+        from src.consumer.handler import handler
 
         t = MagicMock()
         mock_ddb.Table.return_value = t
@@ -88,11 +88,11 @@ class TestConsumerPartialFailure:
 
 
 class TestConsumerIdempotency:
-    @patch("consumer.handler.dynamodb")
+    @patch("src.consumer.handler.dynamodb")
     def test_duplicate_silently_skipped(self, mock_ddb):
         from botocore.exceptions import ClientError
 
-        from consumer.handler import handler
+        from src.consumer.handler import handler
 
         t = MagicMock()
         mock_ddb.Table.return_value = t
@@ -102,11 +102,11 @@ class TestConsumerIdempotency:
         result = handler(_make_sqs_event([_make_event_record()]), MagicMock())
         assert result["batchItemFailures"] == []
 
-    @patch("consumer.handler.dynamodb")
+    @patch("src.consumer.handler.dynamodb")
     def test_other_dynamodb_error_is_failure(self, mock_ddb):
         from botocore.exceptions import ClientError
 
-        from consumer.handler import handler
+        from src.consumer.handler import handler
 
         t = MagicMock()
         mock_ddb.Table.return_value = t
@@ -118,9 +118,9 @@ class TestConsumerIdempotency:
 
 
 class TestConsumerMalformed:
-    @patch("consumer.handler.dynamodb")
+    @patch("src.consumer.handler.dynamodb")
     def test_invalid_json_is_failure(self, mock_ddb):
-        from consumer.handler import handler
+        from src.consumer.handler import handler
 
         event = {"Records": [{"messageId": "bad", "body": "not json", "attributes": {}, "messageAttributes": {}}]}
         result = handler(event, MagicMock())

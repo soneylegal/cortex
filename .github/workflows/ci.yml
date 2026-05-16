@@ -39,9 +39,17 @@ jobs:
       run: pytest tests/unit -v --cov=src --cov-report=xml
       
     - name: Start LocalStack for Integration Tests
-      uses: localstack/setup-localstack@v0.2.2
-      with:
-        image-tag: "4.4.0"
+      run: docker compose up -d --wait localstack
+        
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+
+    - name: Deploy Infrastructure to LocalStack
+      run: make deploy-local
+      env:
+        AWS_ACCESS_KEY_ID: test
+        AWS_SECRET_ACCESS_KEY: test
+        AWS_DEFAULT_REGION: us-east-1
         
     - name: Integration Tests
       run: pytest tests/integration -v

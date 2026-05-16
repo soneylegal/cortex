@@ -62,12 +62,12 @@ def _valid_payload() -> dict:
 class TestProducerHappyPath:
     """Tests for successful event ingestion."""
 
-    @patch("producer.handler.sqs_client")
-    def test_valid_event_returns_202(self, mock_sqs: MagicMock) -> None:
+    @patch("src.producer.handler.events_client")
+    def test_valid_event_returns_202(self, mock_events: MagicMock) -> None:
         """A valid payload should return 202 Accepted with message_id."""
-        from producer.handler import handler
+        from src.producer.handler import handler
 
-        mock_sqs.send_message.return_value = {"MessageId": "msg-abc-123"}
+        mock_events.put_events.return_value = {"FailedEntryCount": 0, "Entries": [{"EventId": "msg-abc-123"}]}
         event = _make_apigw_event(body=_valid_payload())
         context = MagicMock()
 
@@ -79,43 +79,45 @@ class TestProducerHappyPath:
         assert body["message_id"] == "msg-abc-123"
         assert "event_id" in body
 
-    @patch("producer.handler.sqs_client")
-    def test_sqs_send_message_called_with_correct_queue(self, mock_sqs: MagicMock) -> None:
-        """The handler should send to the queue URL from environment."""
-        from producer.handler import handler
+    @patch("src.producer.handler.events_client")
+    def test_events_put_events_called_with_correct_bus(self, mock_events: MagicMock) -> None:
+        """The handler should send to the event bus from environment."""
+        from src.producer.handler import handler
 
-        mock_sqs.send_message.return_value = {"MessageId": "msg-xyz"}
+        mock_events.put_events.return_value = {"FailedEntryCount": 0, "Entries": [{"EventId": "msg-xyz"}]}
+        event = _make_apigw_event(body=_valid_payload())
+        context = MagicMock()
+
+        with patch.dict(os.environ, {"EVENT_BUS_NAME": "cortex-events-bus"}):
+            handler(event, context)
+
+            call_kwargs = mock_events.put_events.call_args
+            assert call_kwargs.kwargs["Entries"][0]["EventBusName"] == "cortex-events-bus"
+
+    @patch("src.producer.handler.events_client")
+    def test_message_attributes_include_event_type(self, mock_events: MagicMock) -> None:
+        """EventBridge entry should include event_type and source."""
+        from src.producer.handler import handler
+
+        mock_events.put_events.return_value = {"FailedEntryCount": 0, "Entries": [{"EventId": "msg-xyz"}]}
         event = _make_apigw_event(body=_valid_payload())
         context = MagicMock()
 
         handler(event, context)
 
-        call_kwargs = mock_sqs.send_message.call_args
-        assert call_kwargs.kwargs["QueueUrl"] == os.environ["QUEUE_URL"]
+        call_kwargs = mock_events.put_events.call_args.kwargs
+        entry = call_kwargs["Entries"][0]
+        assert entry["DetailType"] == "cpu_usage"
+        assert entry["Source"] == "cortex.producer.server-web-01"
+        detail = json.loads(entry["Detail"])
+        assert detail["severity"] == "warning"
 
-    @patch("producer.handler.sqs_client")
-    def test_message_attributes_include_event_type(self, mock_sqs: MagicMock) -> None:
-        """SQS message attributes should include event_type and severity."""
-        from producer.handler import handler
-
-        mock_sqs.send_message.return_value = {"MessageId": "msg-xyz"}
-        event = _make_apigw_event(body=_valid_payload())
-        context = MagicMock()
-
-        handler(event, context)
-
-        call_kwargs = mock_sqs.send_message.call_args.kwargs
-        attrs = call_kwargs["MessageAttributes"]
-        assert attrs["event_type"]["StringValue"] == "cpu_usage"
-        assert attrs["severity"]["StringValue"] == "warning"
-        assert attrs["source"]["StringValue"] == "server-web-01"
-
-    @patch("producer.handler.sqs_client")
-    def test_minimal_payload_accepted(self, mock_sqs: MagicMock) -> None:
+    @patch("src.producer.handler.events_client")
+    def test_minimal_payload_accepted(self, mock_events: MagicMock) -> None:
         """A minimal payload with only required fields should be accepted."""
-        from producer.handler import handler
+        from src.producer.handler import handler
 
-        mock_sqs.send_message.return_value = {"MessageId": "msg-min"}
+        mock_events.put_events.return_value = {"FailedEntryCount": 0, "Entries": [{"EventId": "msg-min"}]}
         payload = {
             "source": "sensor-01",
             "event_type": "health_check",
@@ -127,12 +129,12 @@ class TestProducerHappyPath:
         result = handler(event, context)
         assert result["statusCode"] == 202
 
-    @patch("producer.handler.sqs_client")
-    def test_timestamp_auto_filled_when_missing(self, mock_sqs: MagicMock) -> None:
+    @patch("src.producer.handler.events_client")
+    def test_timestamp_auto_filled_when_missing(self, mock_events: MagicMock) -> None:
         """If timestamp is omitted, it should be auto-filled with UTC now."""
-        from producer.handler import handler
+        from src.producer.handler import handler
 
-        mock_sqs.send_message.return_value = {"MessageId": "msg-ts"}
+        mock_events.put_events.return_value = {"FailedEntryCount": 0, "Entries": [{"EventId": "msg-ts"}]}
         payload = _valid_payload()
         # No timestamp in payload
         assert "timestamp" not in payload or payload.get("timestamp") is None
@@ -142,10 +144,10 @@ class TestProducerHappyPath:
 
         handler(event, context)
 
-        # Check the body sent to SQS contains a timestamp
-        call_kwargs = mock_sqs.send_message.call_args.kwargs
-        body = json.loads(call_kwargs["MessageBody"])
-        assert body["timestamp"] is not None
+        # Check the body sent to EventBridge contains a timestamp
+        call_kwargs = mock_events.put_events.call_args.kwargs
+        detail = json.loads(call_kwargs["Entries"][0]["Detail"])
+        assert detail["timestamp"] is not None
 
 
 # ──────────────────────────────────────────────
@@ -158,7 +160,7 @@ class TestProducerValidation:
 
     def test_empty_body_returns_400(self) -> None:
         """An empty request body should return 400."""
-        from producer.handler import handler
+        from src.producer.handler import handler
 
         event = _make_apigw_event(body=None)
         event["body"] = ""
@@ -169,7 +171,7 @@ class TestProducerValidation:
 
     def test_invalid_json_returns_400(self) -> None:
         """Malformed JSON should return 400."""
-        from producer.handler import handler
+        from src.producer.handler import handler
 
         event = _make_apigw_event()
         event["body"] = "this is not valid json {{"
@@ -182,7 +184,7 @@ class TestProducerValidation:
 
     def test_missing_source_returns_422(self) -> None:
         """Missing required field 'source' should return 422."""
-        from producer.handler import handler
+        from src.producer.handler import handler
 
         payload = {"event_type": "cpu_usage", "data": {"cpu": 50}}
         event = _make_apigw_event(body=payload)
@@ -193,7 +195,7 @@ class TestProducerValidation:
 
     def test_missing_data_returns_422(self) -> None:
         """Missing required field 'data' should return 422."""
-        from producer.handler import handler
+        from src.producer.handler import handler
 
         payload = {"source": "test", "event_type": "cpu_usage"}
         event = _make_apigw_event(body=payload)
@@ -204,7 +206,7 @@ class TestProducerValidation:
 
     def test_invalid_event_type_returns_422(self) -> None:
         """An invalid event_type enum value should return 422."""
-        from producer.handler import handler
+        from src.producer.handler import handler
 
         payload = {
             "source": "test",
@@ -219,7 +221,7 @@ class TestProducerValidation:
 
     def test_source_too_long_returns_422(self) -> None:
         """A source string exceeding max_length should return 422."""
-        from producer.handler import handler
+        from src.producer.handler import handler
 
         payload = {
             "source": "x" * 300,  # max_length is 256
@@ -241,12 +243,12 @@ class TestProducerValidation:
 class TestProducerAPIKey:
     """Tests for API key header validation."""
 
-    @patch("producer.handler.sqs_client")
-    def test_open_mode_no_key_configured(self, mock_sqs: MagicMock) -> None:
+    @patch("src.producer.handler.events_client")
+    def test_open_mode_no_key_configured(self, mock_events: MagicMock) -> None:
         """When CORTEX_API_KEY is not set, requests pass without auth."""
-        from producer.handler import handler
+        from src.producer.handler import handler
 
-        mock_sqs.send_message.return_value = {"MessageId": "msg-open"}
+        mock_events.put_events.return_value = {"FailedEntryCount": 0, "Entries": [{"EventId": "msg-open"}]}
 
         # Ensure no API key is configured
         with patch.dict(os.environ, {}, clear=False):
@@ -257,12 +259,12 @@ class TestProducerAPIKey:
             result = handler(event, context)
             assert result["statusCode"] == 202
 
-    @patch("producer.handler.sqs_client")
-    def test_valid_api_key_accepted(self, mock_sqs: MagicMock) -> None:
+    @patch("src.producer.handler.events_client")
+    def test_valid_api_key_accepted(self, mock_events: MagicMock) -> None:
         """A matching API key should be accepted."""
-        from producer.handler import handler
+        from src.producer.handler import handler
 
-        mock_sqs.send_message.return_value = {"MessageId": "msg-auth"}
+        mock_events.put_events.return_value = {"FailedEntryCount": 0, "Entries": [{"EventId": "msg-auth"}]}
 
         with patch.dict(os.environ, {"CORTEX_API_KEY": "my-secret-key"}):
             event = _make_apigw_event(body=_valid_payload(), api_key="my-secret-key")
@@ -273,7 +275,7 @@ class TestProducerAPIKey:
 
     def test_missing_api_key_returns_401(self) -> None:
         """When a key is configured but not provided, return 401."""
-        from producer.handler import handler
+        from src.producer.handler import handler
 
         with patch.dict(os.environ, {"CORTEX_API_KEY": "my-secret-key"}):
             event = _make_apigw_event(body=_valid_payload())  # No api_key header
@@ -284,7 +286,7 @@ class TestProducerAPIKey:
 
     def test_wrong_api_key_returns_401(self) -> None:
         """An incorrect API key should return 401."""
-        from producer.handler import handler
+        from src.producer.handler import handler
 
         with patch.dict(os.environ, {"CORTEX_API_KEY": "correct-key"}):
             event = _make_apigw_event(body=_valid_payload(), api_key="wrong-key")
@@ -295,19 +297,19 @@ class TestProducerAPIKey:
 
 
 # ──────────────────────────────────────────────
-# SQS failure tests
+# EventBridge failure tests
 # ──────────────────────────────────────────────
 
 
-class TestProducerSQSFailure:
-    """Tests for SQS send failures."""
+class TestProducerEventsFailure:
+    """Tests for EventBridge send failures."""
 
-    @patch("producer.handler.sqs_client")
-    def test_sqs_error_returns_500(self, mock_sqs: MagicMock) -> None:
-        """If SQS send_message fails, return 500."""
-        from producer.handler import handler
+    @patch("src.producer.handler.events_client")
+    def test_events_error_returns_500(self, mock_events: MagicMock) -> None:
+        """If EventBridge put_events fails, return 500."""
+        from src.producer.handler import handler
 
-        mock_sqs.send_message.side_effect = Exception("SQS connection timeout")
+        mock_events.put_events.side_effect = Exception("EventBridge connection timeout")
         event = _make_apigw_event(body=_valid_payload())
         context = MagicMock()
 

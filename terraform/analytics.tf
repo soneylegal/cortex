@@ -9,7 +9,6 @@ resource "aws_s3_bucket" "datalake" {
   tags          = local.common_tags
 }
 
-data "aws_caller_identity" "current" {}
 
 resource "aws_s3_bucket_server_side_encryption_configuration" "datalake" {
   bucket = aws_s3_bucket.datalake.id
@@ -142,11 +141,13 @@ resource "aws_cloudwatch_event_target" "firehose" {
 
 # 5. AWS Glue Database & Athena Workgroup
 resource "aws_glue_catalog_database" "datalake" {
-  name = "${var.project_name}_datalake"
+  count = var.use_localstack ? 0 : 1
+  name  = "${var.project_name}_datalake"
 }
 
 resource "aws_athena_workgroup" "analytics" {
-  name = "${var.project_name}-analytics"
+  count = var.use_localstack ? 0 : 1
+  name  = "${var.project_name}-analytics"
 
   configuration {
     enforce_workgroup_configuration    = true

@@ -10,12 +10,12 @@
 
 services:
   localstack:
-    image: localstack/localstack:4.4.0
+    image: localstack/localstack:3.8.1
     container_name: cortex-localstack
     ports:
       - "4566:4566"
     environment:
-      - SERVICES=lambda,sqs,dynamodb,apigateway,iam,sts,cloudwatch,logs
+      - SERVICES=lambda,sqs,dynamodb,apigateway,iam,sts,cloudwatch,logs,sns,s3,glue,events,firehose,athena
       - DEFAULT_REGION=us-east-1
       - DEBUG=${LOCALSTACK_DEBUG:-0}
       - DOCKER_HOST=unix:///var/run/docker.sock

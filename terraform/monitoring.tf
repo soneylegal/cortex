@@ -2,7 +2,6 @@
 # CloudWatch Dashboard & Alarms (SNS)
 # ──────────────────────────────────────────────
 
-data "aws_region" "current" {}
 
 # 1. SNS Topic for DLQ Alerts
 resource "aws_sns_topic" "alerts" {
